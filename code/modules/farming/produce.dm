@@ -171,12 +171,13 @@
 			START_PROCESSING(SSobj, src)
 
 /obj/item/reagent_containers/food/snacks/grown/apple/process()
-	. = ..()
 	if(ishuman(loc))
 		var/mob/living/carbon/human/H = loc
 		if(H.head == src)
 			if(equippedloc != H.loc)
 				H.dropItemToGround(H.head)
+			return
+	return PROCESS_KILL // no longer worn on a head; equipped() restarts us
 
 /obj/item/reagent_containers/food/snacks/grown/fruit
 	name = "generic fruit"

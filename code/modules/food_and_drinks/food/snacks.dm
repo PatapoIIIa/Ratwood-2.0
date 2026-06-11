@@ -80,6 +80,10 @@ All foods are distributed among various categories. Use common sense.
 	var/extra_eat_effect //ideally the eat_effect should just be able to work with lists, but for now, this'll do
 	var/rotprocess = FALSE
 	var/become_rot_type = null
+	var/rotting = FALSE
+	var/rot_rate = 0
+	var/last_warming_sync = 0
+	var/rot_timerid
 
 	var/fertamount = 50
 
@@ -119,22 +123,82 @@ All foods are distributed among various categories. Use common sense.
 	..()
 
 /obj/item/reagent_containers/food/snacks/proc/begin_rotting()
-	START_PROCESSING(SSobj, src)
+	if(rotting || !rotprocess || QDELETED(src))
+		return
+	rotting = TRUE
+	rot_rate = get_rot_rate()
+	last_warming_sync = world.time
+	reschedule_rot()
 
-/obj/item/reagent_containers/food/snacks/process()
-	..()
-	if(rotprocess)
-		if(!istype(loc, /obj/structure/closet/crate/chest) && ! istype(loc, /obj/item/cooking/platter)  && !istype(loc, /obj/structure/roguemachine/vendor) && !istype (loc, /obj/item/storage/backpack/rogue/artibackpack)&& !istype (loc, /obj/structure/table/cooling))
-			if(!locate(/obj/structure/table) in loc)
-				warming -= 20 //ssobj processing has a wait of 20
-			else
-				if(locate(/obj/structure/table/cooling) in loc)
-					warming -= 0
-				else
-					warming -= 10
-			if(warming < (-1*rotprocess))
-				if(become_rotten())
-					STOP_PROCESSING(SSobj, src)
+/obj/item/reagent_containers/food/snacks/proc/get_rot_rate()
+	if(istype(loc, /obj/structure/closet/crate/chest) || istype(loc, /obj/item/cooking/platter) || istype(loc, /obj/structure/roguemachine/vendor) || istype(loc, /obj/item/storage/backpack/rogue/artibackpack) || istype(loc, /obj/structure/table/cooling))
+		return 0
+	if(!(locate(/obj/structure/table) in loc))
+		return 1
+	if(locate(/obj/structure/table/cooling) in loc)
+		return 0
+	return 0.5
+
+/obj/item/reagent_containers/food/snacks/proc/sync_warming()
+	if(rotting && rot_rate)
+		warming -= (world.time - last_warming_sync) * rot_rate
+	last_warming_sync = world.time
+
+/obj/item/reagent_containers/food/snacks/proc/get_warming()
+	if(!rotting || !rot_rate)
+		return warming
+	return warming - (world.time - last_warming_sync) * rot_rate
+
+/obj/item/reagent_containers/food/snacks/proc/set_warming(value)
+	sync_warming()
+	warming = value
+	if(rot_timerid)
+		return
+	reschedule_rot()
+
+/obj/item/reagent_containers/food/snacks/proc/update_rot()
+	if(!rotting || QDELETED(src))
+		return
+	var/new_rate = get_rot_rate()
+	if(new_rate == rot_rate && (rot_timerid || !new_rate))
+		return // the pending timer (or pause) is still accurate
+	sync_warming()
+	rot_rate = new_rate
+	reschedule_rot()
+
+/obj/item/reagent_containers/food/snacks/proc/reschedule_rot()
+	if(rot_timerid)
+		deltimer(rot_timerid)
+		rot_timerid = null
+	if(!rotting || !rot_rate || !rotprocess)
+		return
+	var/time_to_rot = (warming + rotprocess) / rot_rate
+	if(time_to_rot <= 0)
+		try_rot()
+		return
+	rot_timerid = addtimer(CALLBACK(src, PROC_REF(try_rot)), CEILING(time_to_rot, 1), TIMER_STOPPABLE)
+
+/obj/item/reagent_containers/food/snacks/proc/try_rot()
+	rot_timerid = null
+	if(!rotting || QDELETED(src))
+		return
+	sync_warming()
+	if(warming + rotprocess > 0)
+		reschedule_rot()
+		return
+	become_rotten()
+
+/obj/item/reagent_containers/food/snacks/proc/end_rotting()
+	rotting = FALSE
+	rot_rate = 0
+	if(rot_timerid)
+		deltimer(rot_timerid)
+		rot_timerid = null
+
+/obj/item/reagent_containers/food/snacks/Moved(atom/OldLoc, Dir, Forced = FALSE)
+	. = ..()
+	if(rotting)
+		update_rot()
 
 /obj/item/reagent_containers/food/snacks/can_craft_with()
 	if(eat_effect == /datum/status_effect/debuff/rotfood)
@@ -161,6 +225,7 @@ All foods are distributed among various categories. Use common sense.
 			record_round_statistic(STATS_FOOD_ROTTED)
 			return TRUE
 	else
+		end_rotting()
 		if(to_color)
 			color = "#6c6897"
 		var/mutable_appearance/rotflies = mutable_appearance('icons/roguetown/mob/rotten.dmi', "rotten")
@@ -192,7 +257,7 @@ All foods are distributed among various categories. Use common sense.
 			cooking = cooking + added_input
 			if(cooking >= cooktime)
 				return heating_act(A)
-			warming = 5 MINUTES
+			set_warming(5 MINUTES)
 			return
 	burning(burninput)
 
@@ -227,7 +292,7 @@ All foods are distributed among various categories. Use common sense.
 /obj/item/reagent_containers/food/snacks/burning(input as num) //used for pans without oil, skips the cooking stage
 	if(!input)
 		return
-	warming = 5 MINUTES
+	set_warming(5 MINUTES)
 	if(burntime)
 		burning = burning + input
 		if(eat_effect != /datum/status_effect/debuff/burnedfood)
@@ -519,7 +584,7 @@ All foods are distributed among various categories. Use common sense.
 			rot_text = "This food will last a dae and a half."
 		if(SHELFLIFE_LONG to SHELFLIFE_EXTREME)
 			rot_text = "This food will last three daes."
-	switch(-1 * warming / initial(rotprocess))
+	switch(-1 * get_warming() / initial(rotprocess))
 		if(-INFINITY to 0.25)
 			rot_text += " It is very fresh."
 		if(0.25 to 0.5)
@@ -733,6 +798,7 @@ All foods are distributed among various categories. Use common sense.
 	S.update_snack_overlays(src)
 
 /obj/item/reagent_containers/food/snacks/Destroy()
+	end_rotting()
 	STOP_PROCESSING(SSobj, src)
 	if(contents)
 		for(var/atom/movable/something in contents)
