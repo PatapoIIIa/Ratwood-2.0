@@ -7,6 +7,8 @@
 	typing_indicator_enabled = TRUE
 	
 	var/resize = 1 //Badminnery resize
+	var/ignore_hibernation = FALSE
+	var/hibernation_pending_since = 0
 	var/lastattacker = null
 	var/lastattackerckey = null
 	var/datum/weakref/lastattacker_weakref = null

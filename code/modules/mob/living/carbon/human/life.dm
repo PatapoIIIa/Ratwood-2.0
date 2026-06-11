@@ -24,7 +24,7 @@
 	if (notransform)
 		return
 
-	if(!client && mode == NPC_AI_SLEEP)
+	if(!client && (mode == NPC_AI_SLEEP || (mode == NPC_AI_OFF && !ckey && !clients_in_range && !ignore_hibernation)))
 		return
 
 	. = ..()

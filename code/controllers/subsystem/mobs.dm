@@ -8,9 +8,25 @@ SUBSYSTEM_DEF(mobs)
 	var/static/list/dead_players_by_zlevel[][] = list(list())
 	var/static/list/cubemonkeys = list()
 	var/alive_mobs = 0
+	var/hibernating_mobs = 0
+	var/list/active_z_map
 
 /datum/controller/subsystem/mobs/stat_entry()
-	..("P:[GLOB.mob_living_list.len]")
+	..("P:[GLOB.mob_living_list.len] H:[hibernating_mobs]")
+
+/datum/controller/subsystem/mobs/proc/build_active_z_map()
+	if(!islist(clients_by_zlevel) || !world.maxz)
+		return null
+	var/list/active = new /list(world.maxz)
+	for(var/z in 1 to min(clients_by_zlevel.len, world.maxz))
+		if(!length(clients_by_zlevel[z]))
+			continue
+		active[z] = TRUE
+		if(z > 1)
+			active[z - 1] = TRUE
+		if(z < world.maxz)
+			active[z + 1] = TRUE
+	return active
 
 /datum/controller/subsystem/mobs/proc/MaxZChanged()
 	if (!islist(clients_by_zlevel))
@@ -36,7 +52,10 @@ SUBSYSTEM_DEF(mobs)
 	if (!resumed)
 		src.currentrun = GLOB.mob_living_list.Copy()
 		alive_mobs = 0
+		hibernating_mobs = 0
+		active_z_map = build_active_z_map()
 	var/list/currentrun = src.currentrun
+	var/list/active_z = src.active_z_map
 	var/times_fired = src.times_fired
 
 	while(currentrun.len)
@@ -46,6 +65,21 @@ SUBSYSTEM_DEF(mobs)
 		if(!L || QDELETED(L))
 			GLOB.mob_living_list.Remove(L)
 			continue
+
+		if(active_z && !L.client && !L.ckey && !L.ignore_hibernation)
+			var/turf/L_turf = get_turf(L)
+			if(L_turf && L_turf.z <= active_z.len && !active_z[L_turf.z])
+				if(L.can_hibernate())
+					L.hibernation_pending_since = 0
+					hibernating_mobs++
+					continue
+				if(!L.hibernation_pending_since)
+					L.hibernation_pending_since = world.time
+				else if(world.time - L.hibernation_pending_since >= HIBERNATION_FAILSAFE_TIME)
+					L.hibernation_failsafe()
+					L.hibernation_pending_since = 0
+			else
+				L.hibernation_pending_since = 0
 
 		if(L.stat == DEAD)
 			L.DeadLife()
